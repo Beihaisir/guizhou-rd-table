@@ -81,7 +81,7 @@ if 'flavor_type' not in st.session_state:
 if 'deepseek_key' not in st.session_state:
     st.session_state.deepseek_key = os.environ.get("DEEPSEEK_API_KEY", "")
 if 'recipe_rows' not in st.session_state:
-    st.session_state.recipe_rows = []  # 动态配方行列表
+    st.session_state.recipe_rows = []
 
 try:
     if st.secrets.get("DEEPSEEK_API_KEY"):
@@ -92,41 +92,35 @@ except:
 
 # ==================== 数据模板 ====================
 def create_version_data(flavor_type, is_first=False):
-    """创建一个版本的数据模板 - 版本数据只保留非配方字段，配方字段移到 recipe_rows"""
     return {
         'date': '',
         'purpose': '搭建基础味型框架' if is_first else '',
-        # 工艺流程
         'proc_1': '', 'proc_2': '', 'proc_3': '', 'proc_4': '', 'proc_5': '',
         'proc_6': '', 'proc_7': '', 'proc_8': '', 'proc_9': '', 'proc_10': '',
-        # 品鉴: pending / pass / fail
         'taste_look': 'pending', 'taste_look_note': '',
         'taste_smell': 'pending', 'taste_smell_note': '',
         'taste_flavor': 'pending', 'taste_flavor_note': '',
         'taste_texture': 'pending', 'taste_texture_note': '',
         'taste_sauce': 'pending', 'taste_sauce_note': '',
         'taste_staple': 'pending', 'taste_staple_note': '',
-        # 问题诊断
         'problem': '', 'cause': '', 'solution': '',
-        # 结论: pending / retain / discard / finalized
         'conclusion': 'retain' if is_first else 'pending',
     }
 
 
 def get_default_recipe_rows(flavor_type):
-    """获取默认配方行"""
     is_gongbao = (flavor_type == "gongbao")
     if is_gongbao:
         return [
             {'category': '主料', 'name': '鸡腿肉丁', 'values': ['120', '', '', '', '']},
             {'category': '辣椒酱料', 'name': '糍粑辣椒', 'values': ['50', '', '', '', '']},
-            {'category': '宫保汁', 'name': '甜酱', 'values': ['', '', '', '', '']},
-            {'category': '宫保汁', 'name': '酱油', 'values': ['', '', '', '', '']},
-            {'category': '宫保汁', 'name': '醋', 'values': ['', '', '', '', '']},
-            {'category': '宫保汁', 'name': '味精', 'values': ['', '', '', '', '']},
-            {'category': '宫保汁', 'name': '白糖', 'values': ['', '', '', '', '']},
-            {'category': '宫保汁', 'name': '水淀粉', 'values': ['', '', '', '', '']},
-            {'category': '宫保汁', 'name': '高汤/水', 'values': ['', '', '', '', '']},
+            {'category': '宫保汁（兑碗汁）', 'name': '甜酱', 'values': ['', '', '', '', '']},
+            {'category': '宫保汁（兑碗汁）', 'name': '酱油', 'values': ['', '', '', '', '']},
+            {'category': '宫保汁（兑碗汁）', 'name': '醋', 'values': ['', '', '', '', '']},
+            {'category': '宫保汁（兑碗汁）', 'name': '味精', 'values': ['', '', '', '', '']},
+            {'category': '宫保汁（兑碗汁）', 'name': '白糖', 'values': ['', '', '', '', '']},
+            {'category': '宫保汁（兑碗汁）', 'name': '水淀粉', 'values': ['', '', '', '', '']},
+            {'category': '宫保汁（兑碗汁）', 'name': '高汤/水', 'values': ['', '', '', '', '']},
             {'category': '辅料', 'name': '蒜苗', 'values': ['30', '', '', '', '']},
             {'category': '辅料', 'name': '姜蒜泥', 'values': ['20', '', '', '', '']},
             {'category': '烹调用油', 'name': '大豆油', 'values': ['50', '', '', '', '']},
@@ -137,10 +131,10 @@ def get_default_recipe_rows(flavor_type):
             {'category': '辣椒酱料', 'name': '红泡椒', 'values': ['20', '', '', '', '']},
             {'category': '辣椒酱料', 'name': '青泡椒', 'values': ['20', '', '', '', '']},
             {'category': '辣椒酱料', 'name': '糟辣椒', 'values': ['10', '', '', '', '']},
-            {'category': '独立调料', 'name': '味精', 'values': ['3', '', '', '', '']},
-            {'category': '独立调料', 'name': '酱油', 'values': ['3', '', '', '', '']},
-            {'category': '独立调料', 'name': '醋', 'values': ['3', '', '', '', '']},
-            {'category': '独立调料', 'name': '淀粉', 'values': ['3', '', '', '', '']},
+            {'category': '独立调料（直接撒入）', 'name': '味精', 'values': ['3', '', '', '', '']},
+            {'category': '独立调料（直接撒入）', 'name': '酱油', 'values': ['3', '', '', '', '']},
+            {'category': '独立调料（直接撒入）', 'name': '醋', 'values': ['3', '', '', '', '']},
+            {'category': '独立调料（直接撒入）', 'name': '淀粉', 'values': ['3', '', '', '', '']},
             {'category': '辅料', 'name': '蒜苗', 'values': ['30', '', '', '', '']},
             {'category': '辅料', 'name': '姜蒜泥', 'values': ['20', '', '', '', '']},
             {'category': '烹调用油', 'name': '大豆油', 'values': ['50', '', '', '', '']},
@@ -148,7 +142,6 @@ def get_default_recipe_rows(flavor_type):
 
 
 def get_default_data(flavor_type):
-    """获取完整默认数据"""
     is_gongbao = (flavor_type == "gongbao")
     data = {
         'product_name': '宫保鸡丁' if is_gongbao else '泡椒鳝鱼',
@@ -182,24 +175,28 @@ def taste_emoji(val):
     return m.get(val, '—')
 
 
+def taste_text(val):
+    m = {'pending': '—', 'pass': '达标', 'fail': '不达标'}
+    return m.get(val, '—')
+
+
+def conclusion_text(val):
+    m = {'pending': '—', 'retain': '保留优化', 'discard': '淘汰', 'finalized': '定版通过'}
+    return m.get(val, '—')
+
+
 def build_context():
-    """构建AI上下文"""
     data = st.session_state.table_data
     rows = st.session_state.recipe_rows
     ctx = f"产品：{data['product_name']}，味型：{data['flavor_label']}\n"
     ctx += f"出品结构：{data.get('structure', '')}\n\n"
-
     for vi, vk in enumerate(VERSION_KEYS):
         ver = data['versions'][vk]
         ctx += f"【{vk.replace(chr(10), ' ')}】日期：{ver['date']}，目的：{ver['purpose']}\n"
-
-        # 配方行
         for r in rows:
             val = r['values'][vi] if vi < len(r['values']) else ''
             if val:
                 ctx += f"{r['category']} - {r['name']}：{val}g\n"
-
-        ctx += f"结论：{ver.get('conclusion', '')}\n"
         tastes = []
         for tk, tl in [('taste_look', '观感'), ('taste_smell', '香气'), ('taste_flavor', '味型'),
                        ('taste_texture', '口感'), ('taste_sauce', '芡汁'), ('taste_staple', '配主食')]:
@@ -211,7 +208,7 @@ def build_context():
                 tastes.append(f"{tl}✅")
         if tastes:
             ctx += f"品鉴：{' '.join(tastes)}\n"
-        ctx += "\n"
+        ctx += f"结论：{ver.get('conclusion', '')}\n\n"
     return ctx
 
 
@@ -230,62 +227,92 @@ def call_deepseek(messages):
         return f"❌ API 调用失败：{str(e)}"
 
 
-def build_full_csv():
-    """构建完整研发记录 CSV"""
+def build_export_csv():
+    """
+    构建导出 CSV：和页面表格结构一致
+    格式：
+    区块标题行（如"📋 配方记录"）
+    项目, 类别, 原料名称, V1.0, V1.1, V1.2, V2.0, 终版
+    """
     data = st.session_state.table_data
     rows = st.session_state.recipe_rows
+    versions = data['versions']
 
-    csv_rows = []
-    for vi, vk in enumerate(VERSION_KEYS):
-        ver = data['versions'][vk]
-        row = {
-            '产品名称': data['product_name'],
-            '味型': data['flavor_label'],
-            '出品结构': data.get('structure', ''),
-            '研发师傅': data.get('chef', ''),
-            '记录人': data.get('recorder', ''),
-            '版本': vk.replace('\n', ' '),
-            '日期': ver['date'],
-            '研发目的': ver['purpose'],
-        }
-        # 配方
-        for r in rows:
-            val = r['values'][vi] if vi < len(r['values']) else ''
-            row[f"{r['category']}_{r['name']}(g)"] = val
+    lines = []
 
-        # 工艺流程
-        for pi in range(1, 11):
-            row[f'步骤{pi}'] = ver.get(f'proc_{pi}', '')
+    # ===== 表头信息 =====
+    lines.append(f"产品名称,{data['product_name']}")
+    lines.append(f"味型,{data['flavor_label']}")
+    lines.append(f"出品结构,{data.get('structure', '')}")
+    lines.append(f"研发师傅,{data.get('chef', '')}")
+    lines.append(f"记录人,{data.get('recorder', '')}")
+    lines.append("")
 
-        # 品鉴
-        for tl, tk in [('观感', 'taste_look'), ('香气', 'taste_smell'), ('味型', 'taste_flavor'),
-                       ('主料口感', 'taste_texture'), ('芡汁', 'taste_sauce'), ('搭配主食', 'taste_staple')]:
-            row[f'品鉴_{tl}'] = taste_emoji(ver.get(tk, 'pending'))
-            row[f'品鉴_{tl}_备注'] = ver.get(f'{tk}_note', '')
+    # ===== 日期 =====
+    header = "项目,," + ",".join([vk.replace('\n', ' ') for vk in VERSION_KEYS])
+    lines.append(header)
+    lines.append("日期,," + ",".join([versions[vk]['date'] for vk in VERSION_KEYS]))
+    lines.append("研发目的,," + ",".join([versions[vk]['purpose'] for vk in VERSION_KEYS]))
+    lines.append("")
 
-        # 问题
-        row['问题描述'] = ver.get('problem', '')
-        row['原因分析'] = ver.get('cause', '')
-        row['调整方案'] = ver.get('solution', '')
-        row['版本结论'] = {'pending': '—', 'retain': '保留优化', 'discard': '淘汰', 'finalized': '✅ 定版通过'}.get(
-            ver.get('conclusion', 'pending'), '—')
-        csv_rows.append(row)
+    # ===== 配方记录 =====
+    lines.append("【配方记录】")
+    lines.append(header)
+    for r in rows:
+        vals = [r['values'][vi] if vi < len(r['values']) else '' for vi in range(NUM_V)]
+        lines.append(f",{r['category']},{r['name']}," + ",".join(vals))
+    lines.append("")
 
-    # 总结行
-    sr = {k: '' for k in csv_rows[0].keys()}
-    sr['产品名称'] = data['product_name']
-    sr['版本'] = '【研发总结】'
-    sr['研发目的'] = f"最终配方：{data['summary'].get('final_recipe', '')}"
-    sr['问题描述'] = f"最终流程：{data['summary'].get('final_process', '')}"
-    sr['原因分析'] = f"成本：{data['summary'].get('cost', '')} | 周期：{data['summary'].get('duration', '')}"
-    sr['调整方案'] = f"师傅终签：{data['summary'].get('signature', '')}"
-    csv_rows.append(sr)
+    # ===== 工艺流程 =====
+    lines.append("【工艺流程】")
+    lines.append(header)
+    proc_labels = [
+        "1.主料处理", "2.兑汁/备料", "3.滑油/煸炒", "4.炒酱料", "5.爆小料",
+        "6.合炒", "7.调味/烹汁", "8.收汁出锅", "9.煮主食", "10.其他"
+    ]
+    for idx, lb in enumerate(proc_labels):
+        vals = [versions[vk].get(f'proc_{idx + 1}', '') for vk in VERSION_KEYS]
+        lines.append(f",,{lb}," + ",".join(vals))
+    lines.append("")
 
-    return pd.DataFrame(csv_rows)
+    # ===== 品鉴记录 =====
+    lines.append("【品鉴记录】")
+    lines.append(header)
+    for lb, fd in [("观感", "taste_look"), ("香气", "taste_smell"), ("味型", "taste_flavor"),
+                   ("主料口感", "taste_texture"), ("芡汁", "taste_sauce"), ("搭配主食", "taste_staple")]:
+        statuses = [taste_text(versions[vk].get(fd, 'pending')) for vk in VERSION_KEYS]
+        notes = [versions[vk].get(f'{fd}_note', '') for vk in VERSION_KEYS]
+        lines.append(f",,{lb}（状态）," + ",".join(statuses))
+        lines.append(f",,{lb}（备注）," + ",".join(notes))
+    lines.append("")
+
+    # ===== 问题诊断 =====
+    lines.append("【问题诊断与调整】")
+    lines.append(header)
+    for lb, fd in [("问题描述", "problem"), ("原因分析", "cause"), ("调整方案", "solution")]:
+        vals = [versions[vk].get(fd, '') for vk in VERSION_KEYS]
+        lines.append(f",,{lb}," + ",".join(vals))
+    lines.append("")
+
+    # ===== 版本结论 =====
+    lines.append("【版本结论】")
+    lines.append(header)
+    vals = [conclusion_text(versions[vk].get('conclusion', 'pending')) for vk in VERSION_KEYS]
+    lines.append(f",,结论," + ",".join(vals))
+    lines.append("")
+
+    # ===== 研发总结 =====
+    lines.append("【研发总结】")
+    lines.append(f"最终配方,{data['summary'].get('final_recipe', '')}")
+    lines.append(f"最终流程,{data['summary'].get('final_process', '')}")
+    lines.append(f"浇头成本（元/份）,{data['summary'].get('cost', '')}")
+    lines.append(f"研发周期,{data['summary'].get('duration', '')}")
+    lines.append(f"师傅终签,{data['summary'].get('signature', '')}")
+
+    return "\n".join(lines)
 
 
 def add_recipe_row():
-    """添加一行配方"""
     st.session_state.recipe_rows.append({
         'category': '',
         'name': '',
@@ -294,13 +321,11 @@ def add_recipe_row():
 
 
 def delete_recipe_row(idx):
-    """删除一行配方"""
     if len(st.session_state.recipe_rows) > 1:
         st.session_state.recipe_rows.pop(idx)
 
 
 def switch_flavor(new_flavor):
-    """切换味型"""
     st.session_state.flavor_type = new_flavor
     st.session_state.table_data = get_default_data(new_flavor)
     st.session_state.recipe_rows = get_default_recipe_rows(new_flavor)
@@ -356,9 +381,12 @@ data = st.session_state.table_data
 versions = data['versions']
 recipe_rows = st.session_state.recipe_rows
 
-# ==================== 表头 ====================
-COL_RATIO = [1.0, 1.0] + [1] * NUM_V  # [类别, 原料名, V1.0, V1.1, V1.2, V2.0, 终版]
-cols = st.columns(COL_RATIO)
+# ==================== 表格渲染 ====================
+FULL_COLS = [1.0, 1.0] + [1] * NUM_V
+PROC_COLS = [2.0] + [1] * NUM_V
+
+# 表头
+cols = st.columns(FULL_COLS)
 with cols[0]:
     st.markdown("**类别**")
 with cols[1]:
@@ -368,9 +396,7 @@ for i, vk in enumerate(VERSION_KEYS):
         st.markdown(f"**{vk.replace(chr(10), '<br>')}**", unsafe_allow_html=True)
 st.divider()
 
-# ==================== 日期 & 目的（跨越配方列） ====================
-# 用 2 + NUM_V 列
-FULL_COLS = [1.0, 1.0] + [1] * NUM_V
+# 日期 & 目的
 cols = st.columns(FULL_COLS)
 with cols[0]:
     st.markdown("**📅 日期**")
@@ -382,14 +408,13 @@ for i, vk in enumerate(VERSION_KEYS):
                                              key=f"date_{vk}", label_visibility="collapsed", placeholder="月/日")
         versions[vk]['purpose'] = st.text_input("目的", value=versions[vk]['purpose'],
                                                 key=f"purpose_{vk}", label_visibility="collapsed", placeholder="目的...")
-
 st.divider()
 
 # ==================== 配方记录（动态行） ====================
-st.markdown('<div class="section-label">📋 配方记录 <span style="font-weight:400;font-size:0.75rem;">（可自由增删行）</span></div>',
-            unsafe_allow_html=True)
+st.markdown(
+    '<div class="section-label">📋 配方记录 <span style="font-weight:400;font-size:0.75rem;">（可自由增删行）</span></div>',
+    unsafe_allow_html=True)
 
-# 渲染每一行配方
 delete_idx = None
 for ri, row in enumerate(recipe_rows):
     cols = st.columns(FULL_COLS)
@@ -397,10 +422,9 @@ for ri, row in enumerate(recipe_rows):
         row['category'] = st.text_input(
             f"类别{ri}", value=row['category'],
             key=f"cat_{ri}", label_visibility="collapsed",
-            placeholder="如：主料、辅料、宫保汁..."
+            placeholder="如：主料、辅料..."
         )
     with cols[1]:
-        # 原料名 + 删除按钮
         nc1, nc2 = st.columns([3, 1])
         with nc1:
             row['name'] = st.text_input(
@@ -413,10 +437,8 @@ for ri, row in enumerate(recipe_rows):
             if st.button("✕", key=f"del_{ri}", help="删除此行"):
                 delete_idx = ri
             st.markdown('</div>', unsafe_allow_html=True)
-
     for vi in range(NUM_V):
         with cols[vi + 2]:
-            # 确保 values 长度够
             while len(row['values']) <= vi:
                 row['values'].append('')
             row['values'][vi] = st.text_input(
@@ -425,12 +447,10 @@ for ri, row in enumerate(recipe_rows):
                 placeholder="g"
             )
 
-# 处理删除
 if delete_idx is not None:
     delete_recipe_row(delete_idx)
     st.rerun()
 
-# 添加按钮
 st.markdown('<div class="add-btn">', unsafe_allow_html=True)
 if st.button("＋ 添加一行配方", use_container_width=True, key="add_recipe"):
     add_recipe_row()
@@ -439,8 +459,6 @@ st.markdown('</div>', unsafe_allow_html=True)
 
 # ==================== 工艺流程 ====================
 st.markdown('<div class="section-label">⚙️ 工艺流程</div>', unsafe_allow_html=True)
-# 工艺流程：标签占2列 + 5个版本
-PROC_COLS = [2.0] + [1] * NUM_V
 proc_labels = [
     "1.主料处理", "2.兑汁/备料", "3.滑油/煸炒", "4.炒酱料", "5.爆小料",
     "6.合炒", "7.调味/烹汁", "8.收汁出锅", "9.煮主食", "10.其他"
@@ -527,13 +545,9 @@ with sc2:
 st.divider()
 b1, b2, b3 = st.columns(3)
 with b1:
-    # 导出 JSON 包含 recipe_rows
-    export_data = {
-        **data,
-        'recipe_rows': st.session_state.recipe_rows,
-    }
+    export_data = {**data, 'recipe_rows': st.session_state.recipe_rows}
     st.download_button(
-        "📥 导出 JSON（完整研发记录）",
+        "📥 导出 JSON",
         json.dumps(export_data, ensure_ascii=False, indent=2),
         f"研发记录_{data['product_name']}_{datetime.now().strftime('%Y%m%d')}.json",
         "application/json",
@@ -553,10 +567,10 @@ with b2:
         except Exception as e:
             st.error(f"导入失败：{e}")
 with b3:
-    full_df = build_full_csv()
+    csv_content = build_export_csv()
     st.download_button(
-        "📊 导出 CSV（完整研发记录表）",
-        full_df.to_csv(index=False, encoding='utf-8-sig'),
+        "📊 导出 CSV（与页面表格一致）",
+        csv_content,
         f"研发记录表_{data['product_name']}_{datetime.now().strftime('%Y%m%d')}.csv",
         "text/csv",
         use_container_width=True,
@@ -627,7 +641,6 @@ with st.sidebar:
         st.session_state.chat_history.append({"role": "assistant", "content": rep})
         st.rerun()
 
-# 页脚
 st.divider()
 st.caption(
     "贵州盖浇面/饭 · 菜品研发过程记录表 | 配方行可自由增删 | 宫保：糍粑辣椒+宫保汁（兑碗汁） | 泡椒：红泡椒+青泡椒+糟辣椒+独立调料（直接撒入） | Powered by Streamlit + DeepSeek")
