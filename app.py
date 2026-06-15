@@ -724,4 +724,18 @@ with st.sidebar:
             ctx = build_table_context()
             messages = [
                 {"role": "system",
-                 "content": "你是贵州菜品研发专家助手。根据用户的问题
+                 "content": "你是贵州菜品研发专家助手。根据用户的问题和当前研发记录数据，给出专业、具体的回答。可以引用表格中的具体数据。用中文回答。"},
+                {"role": "user", "content": f"当前研发记录数据：\n\n{ctx}\n\n用户问题：{user_msg}"}
+            ]
+            reply = call_deepseek(messages)
+        st.session_state.chat_history.append({"role": "assistant", "content": reply})
+        st.rerun()
+
+# ==================== 页脚 ====================
+st.divider()
+st.caption(
+    "贵州盖浇面/饭 · 菜品研发过程记录表 | "
+    "宫保（糊辣荔枝）味型：糍粑辣椒 + 宫保汁（兑碗汁） | "
+    "泡椒（酸辣）味型：红泡椒+青泡椒+糟辣椒 + 独立调料（直接撒入，不兑汁） | "
+    "Powered by Streamlit + DeepSeek"
+)
