@@ -1,6 +1,6 @@
 """
 贵州盖浇面/饭 · 菜品研发过程记录表
-Streamlit 应用 - 支持配方动态增减
+Streamlit 应用 - 支持配方动态增减，导出具完整表头的研发记录表
 """
 
 import streamlit as st
@@ -9,6 +9,7 @@ import json
 import os
 from datetime import datetime
 from openai import OpenAI
+import io
 
 # ==================== 页面配置 ====================
 st.set_page_config(
@@ -227,89 +228,127 @@ def call_deepseek(messages):
         return f"❌ API 调用失败：{str(e)}"
 
 
-def build_export_csv():
+def build_export_dataframe():
     """
-    构建导出 CSV：和页面表格结构一致
-    格式：
-    区块标题行（如"📋 配方记录"）
-    项目, 类别, 原料名称, V1.0, V1.1, V1.2, V2.0, 终版
+    构建完整的导出 DataFrame，包含：
+    1. 表头信息
+    2. 配方记录（动态行）
+    3. 工艺流程
+    4. 品鉴记录
+    5. 问题诊断
+    6. 版本结论
+    7. 研发总结
+
+    格式与页面显示的表格完全一致
     """
     data = st.session_state.table_data
     rows = st.session_state.recipe_rows
     versions = data['versions']
 
-    lines = []
+    # 版本列名
+    ver_cols = [vk.replace('\n', ' ') for vk in VERSION_KEYS]
 
-    # ===== 表头信息 =====
-    lines.append(f"产品名称,{data['product_name']}")
-    lines.append(f"味型,{data['flavor_label']}")
-    lines.append(f"出品结构,{data.get('structure', '')}")
-    lines.append(f"研发师傅,{data.get('chef', '')}")
-    lines.append(f"记录人,{data.get('recorder', '')}")
-    lines.append("")
+    # 用列表收集所有行，每行是一个 dict
+    all_rows = []
 
-    # ===== 日期 =====
-    header = "项目,," + ",".join([vk.replace('\n', ' ') for vk in VERSION_KEYS])
-    lines.append(header)
-    lines.append("日期,," + ",".join([versions[vk]['date'] for vk in VERSION_KEYS]))
-    lines.append("研发目的,," + ",".join([versions[vk]['purpose'] for vk in VERSION_KEYS]))
-    lines.append("")
+    # ========== 表头信息区 ==========
+    all_rows.append({'项目': '产品名称', '内容': data['product_name'], **{v: '' for v in ver_cols}})
+    all_rows.append({'项目': '味型', '内容': data['flavor_label'], **{v: '' for v in ver_cols}})
+    all_rows.append({'项目': '出品结构', '内容': data.get('structure', ''), **{v: '' for v in ver_cols}})
+    all_rows.append({'项目': '研发师傅', '内容': data.get('chef', ''), **{v: '' for v in ver_cols}})
+    all_rows.append({'项目': '记录人', '内容': data.get('recorder', ''), **{v: '' for v in ver_cols}})
 
-    # ===== 配方记录 =====
-    lines.append("【配方记录】")
-    lines.append(header)
+    # ========== 空行分隔 ==========
+    def blank_row():
+        return {'项目': '', '内容': '', **{v: '' for v in ver_cols}}
+
+    def section_row(title):
+        return {'项目': f'【{title}】', '内容': '', **{v: '' for v in ver_cols}}
+
+    all_rows.append(blank_row())
+
+    # ========== 日期 & 目的 ==========
+    all_rows.append(section_row('基本信息'))
+    date_row = {'项目': '日期', '内容': ''}
+    purpose_row = {'项目': '研发目的', '内容': ''}
+    for vi, vk in enumerate(VERSION_KEYS):
+        date_row[ver_cols[vi]] = versions[vk]['date']
+        purpose_row[ver_cols[vi]] = versions[vk]['purpose']
+    all_rows.append(date_row)
+    all_rows.append(purpose_row)
+    all_rows.append(blank_row())
+
+    # ========== 配方记录 ==========
+    all_rows.append(section_row('配方记录'))
     for r in rows:
-        vals = [r['values'][vi] if vi < len(r['values']) else '' for vi in range(NUM_V)]
-        lines.append(f",{r['category']},{r['name']}," + ",".join(vals))
-    lines.append("")
+        row_dict = {'项目': r['category'], '内容': r['name']}
+        for vi in range(NUM_V):
+            val = r['values'][vi] if vi < len(r['values']) else ''
+            row_dict[ver_cols[vi]] = val
+        all_rows.append(row_dict)
+    all_rows.append(blank_row())
 
-    # ===== 工艺流程 =====
-    lines.append("【工艺流程】")
-    lines.append(header)
+    # ========== 工艺流程 ==========
+    all_rows.append(section_row('工艺流程'))
     proc_labels = [
         "1.主料处理", "2.兑汁/备料", "3.滑油/煸炒", "4.炒酱料", "5.爆小料",
         "6.合炒", "7.调味/烹汁", "8.收汁出锅", "9.煮主食", "10.其他"
     ]
     for idx, lb in enumerate(proc_labels):
-        vals = [versions[vk].get(f'proc_{idx + 1}', '') for vk in VERSION_KEYS]
-        lines.append(f",,{lb}," + ",".join(vals))
-    lines.append("")
+        row_dict = {'项目': '', '内容': lb}
+        for vi, vk in enumerate(VERSION_KEYS):
+            row_dict[ver_cols[vi]] = versions[vk].get(f'proc_{idx + 1}', '')
+        all_rows.append(row_dict)
+    all_rows.append(blank_row())
 
-    # ===== 品鉴记录 =====
-    lines.append("【品鉴记录】")
-    lines.append(header)
+    # ========== 品鉴记录 ==========
+    all_rows.append(section_row('品鉴记录'))
     for lb, fd in [("观感", "taste_look"), ("香气", "taste_smell"), ("味型", "taste_flavor"),
                    ("主料口感", "taste_texture"), ("芡汁", "taste_sauce"), ("搭配主食", "taste_staple")]:
-        statuses = [taste_text(versions[vk].get(fd, 'pending')) for vk in VERSION_KEYS]
-        notes = [versions[vk].get(f'{fd}_note', '') for vk in VERSION_KEYS]
-        lines.append(f",,{lb}（状态）," + ",".join(statuses))
-        lines.append(f",,{lb}（备注）," + ",".join(notes))
-    lines.append("")
+        # 状态行
+        status_row = {'项目': lb, '内容': '状态'}
+        note_row = {'项目': '', '内容': '备注'}
+        for vi, vk in enumerate(VERSION_KEYS):
+            status_row[ver_cols[vi]] = taste_text(versions[vk].get(fd, 'pending'))
+            note_row[ver_cols[vi]] = versions[vk].get(f'{fd}_note', '')
+        all_rows.append(status_row)
+        all_rows.append(note_row)
+    all_rows.append(blank_row())
 
-    # ===== 问题诊断 =====
-    lines.append("【问题诊断与调整】")
-    lines.append(header)
+    # ========== 问题诊断 ==========
+    all_rows.append(section_row('问题诊断与调整'))
     for lb, fd in [("问题描述", "problem"), ("原因分析", "cause"), ("调整方案", "solution")]:
-        vals = [versions[vk].get(fd, '') for vk in VERSION_KEYS]
-        lines.append(f",,{lb}," + ",".join(vals))
-    lines.append("")
+        row_dict = {'项目': lb, '内容': ''}
+        for vi, vk in enumerate(VERSION_KEYS):
+            row_dict[ver_cols[vi]] = versions[vk].get(fd, '')
+        all_rows.append(row_dict)
+    all_rows.append(blank_row())
 
-    # ===== 版本结论 =====
-    lines.append("【版本结论】")
-    lines.append(header)
-    vals = [conclusion_text(versions[vk].get('conclusion', 'pending')) for vk in VERSION_KEYS]
-    lines.append(f",,结论," + ",".join(vals))
-    lines.append("")
+    # ========== 版本结论 ==========
+    all_rows.append(section_row('版本结论'))
+    conclusion_row = {'项目': '结论', '内容': ''}
+    for vi, vk in enumerate(VERSION_KEYS):
+        conclusion_row[ver_cols[vi]] = conclusion_text(versions[vk].get('conclusion', 'pending'))
+    all_rows.append(conclusion_row)
+    all_rows.append(blank_row())
 
-    # ===== 研发总结 =====
-    lines.append("【研发总结】")
-    lines.append(f"最终配方,{data['summary'].get('final_recipe', '')}")
-    lines.append(f"最终流程,{data['summary'].get('final_process', '')}")
-    lines.append(f"浇头成本（元/份）,{data['summary'].get('cost', '')}")
-    lines.append(f"研发周期,{data['summary'].get('duration', '')}")
-    lines.append(f"师傅终签,{data['summary'].get('signature', '')}")
+    # ========== 研发总结 ==========
+    all_rows.append(section_row('研发总结'))
+    all_rows.append({'项目': '最终配方', '内容': data['summary'].get('final_recipe', ''),
+                     **{v: '' for v in ver_cols}})
+    all_rows.append({'项目': '最终流程（关键控制点）', '内容': data['summary'].get('final_process', ''),
+                     **{v: '' for v in ver_cols}})
+    all_rows.append({'项目': '浇头成本（元/份）', '内容': data['summary'].get('cost', ''),
+                     **{v: '' for v in ver_cols}})
+    all_rows.append({'项目': '研发周期', '内容': data['summary'].get('duration', ''),
+                     **{v: '' for v in ver_cols}})
+    all_rows.append({'项目': '师傅终签', '内容': data['summary'].get('signature', ''),
+                     **{v: '' for v in ver_cols}})
 
-    return "\n".join(lines)
+    # 构建 DataFrame
+    columns = ['项目', '内容'] + ver_cols
+    df = pd.DataFrame(all_rows, columns=columns)
+    return df
 
 
 def add_recipe_row():
@@ -332,7 +371,8 @@ def switch_flavor(new_flavor):
 
 
 # ==================== 主界面 ====================
-st.markdown('<div class="main-title">🔥 <span>贵州盖浇面/饭</span> · 菜品研发过程记录表</div>', unsafe_allow_html=True)
+st.markdown('<div class="main-title">🔥 <span>贵州盖浇面/饭</span> · 菜品研发过程记录表</div>',
+            unsafe_allow_html=True)
 
 # ---- 顶部信息 ----
 c1, c2, c3, c4, c5, c6 = st.columns([2, 1.5, 1, 1, 0.8, 0.8])
@@ -407,7 +447,8 @@ for i, vk in enumerate(VERSION_KEYS):
         versions[vk]['date'] = st.text_input("日期", value=versions[vk]['date'],
                                              key=f"date_{vk}", label_visibility="collapsed", placeholder="月/日")
         versions[vk]['purpose'] = st.text_input("目的", value=versions[vk]['purpose'],
-                                                key=f"purpose_{vk}", label_visibility="collapsed", placeholder="目的...")
+                                                key=f"purpose_{vk}", label_visibility="collapsed",
+                                                placeholder="目的...")
 st.divider()
 
 # ==================== 配方记录（动态行） ====================
@@ -534,7 +575,8 @@ with sc1:
     data['summary']['final_recipe'] = st.text_area("最终配方", value=data['summary'].get('final_recipe', ''),
                                                    height=80, key="sr")
     data['summary']['final_process'] = st.text_area("最终流程（关键控制点）",
-                                                    value=data['summary'].get('final_process', ''), height=80, key="sp")
+                                                    value=data['summary'].get('final_process', ''), height=80,
+                                                    key="sp")
 with sc2:
     data['summary']['cost'] = st.text_input("浇头成本（元/份）", value=data['summary'].get('cost', ''), key="sc")
     data['summary']['duration'] = st.text_input("研发周期", value=data['summary'].get('duration', ''),
@@ -567,10 +609,11 @@ with b2:
         except Exception as e:
             st.error(f"导入失败：{e}")
 with b3:
-    csv_content = build_export_csv()
+    # 导出完整表格 CSV
+    export_df = build_export_dataframe()
     st.download_button(
-        "📊 导出 CSV（与页面表格一致）",
-        csv_content,
+        "📊 导出 CSV（完整研发记录表）",
+        export_df.to_csv(index=False, encoding='utf-8-sig'),
         f"研发记录表_{data['product_name']}_{datetime.now().strftime('%Y%m%d')}.csv",
         "text/csv",
         use_container_width=True,
