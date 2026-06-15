@@ -1,6 +1,6 @@
 """
 贵州盖浇面/饭 · 菜品研发过程记录表
-Streamlit 应用 - 部署到 Streamlit Cloud
+Streamlit 应用 - 支持配方动态增减
 """
 
 import streamlit as st
@@ -9,7 +9,6 @@ import json
 import os
 from datetime import datetime
 from openai import OpenAI
-import base64
 
 # ==================== 页面配置 ====================
 st.set_page_config(
@@ -36,7 +35,7 @@ st.markdown("""
     .main-title span { color: #fff; }
     .section-label {
         font-weight: 700; font-size: 0.9rem; color: #e94560;
-        margin-top: 10px; margin-bottom: 4px;
+        margin-top: 10px; margin-bottom: 6px;
         padding: 5px 10px; background: rgba(233,68,96,0.1);
         border-radius: 4px; border-left: 3px solid #e94560;
     }
@@ -44,42 +43,30 @@ st.markdown("""
     .stTextInput input, .stTextArea textarea {
         font-size: 0.78rem !important; padding: 2px 4px !important;
     }
-    /* 打印样式 - 使用 @media print 实现真正的浏览器打印 */
+    .delete-btn button {
+        background: transparent !important;
+        border: 1px solid #e94560 !important;
+        color: #e94560 !important;
+        padding: 2px 8px !important;
+        font-size: 0.7rem !important;
+    }
+    .add-btn button {
+        background: transparent !important;
+        border: 1px dashed #0f9 !important;
+        color: #0f9 !important;
+        font-size: 0.78rem !important;
+    }
     @media print {
-        /* 隐藏 Streamlit 自带元素 */
-        header[data-testid="stHeader"],
-        .stSidebar,
-        .stDeployButton,
-        [data-testid="stToolbar"],
-        [data-testid="stDecoration"],
-        iframe,
-        .stDownloadButton,
-        hr {
+        header[data-testid="stHeader"], .stSidebar, .stDeployButton,
+        [data-testid="stToolbar"], [data-testid="stDecoration"],
+        iframe, .stDownloadButton, hr, .delete-btn, .add-btn {
             display: none !important;
         }
-        /* 白色背景 */
-        .stApp {
-            background: #fff !important;
-        }
-        .main-title {
-            color: #000 !important;
-            border-bottom-color: #000 !important;
-        }
+        .stApp { background: #fff !important; }
+        .main-title { color: #000 !important; border-bottom-color: #000 !important; }
         .main-title span { color: #000 !important; }
-        .section-label {
-            color: #000 !important;
-            background: #f0f0f0 !important;
-            border-left-color: #000 !important;
-        }
-        /* 确保表格可见 */
-        .stMainBlockContainer {
-            max-width: 100% !important;
-            padding: 0 !important;
-        }
-        body {
-            -webkit-print-color-adjust: exact;
-            print-color-adjust: exact;
-        }
+        .section-label { color: #000 !important; background: #f0f0f0 !important; border-left-color: #000 !important; }
+        body { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
     }
 </style>
 """, unsafe_allow_html=True)
@@ -93,8 +80,8 @@ if 'flavor_type' not in st.session_state:
     st.session_state.flavor_type = "gongbao"
 if 'deepseek_key' not in st.session_state:
     st.session_state.deepseek_key = os.environ.get("DEEPSEEK_API_KEY", "")
-if 'trigger_print' not in st.session_state:
-    st.session_state.trigger_print = False
+if 'recipe_rows' not in st.session_state:
+    st.session_state.recipe_rows = []  # 动态配方行列表
 
 try:
     if st.secrets.get("DEEPSEEK_API_KEY"):
@@ -105,42 +92,63 @@ except:
 
 # ==================== 数据模板 ====================
 def create_version_data(flavor_type, is_first=False):
-    is_gongbao = (flavor_type == "gongbao")
+    """创建一个版本的数据模板 - 版本数据只保留非配方字段，配方字段移到 recipe_rows"""
     return {
         'date': '',
         'purpose': '搭建基础味型框架' if is_first else '',
-        'main_name': '鸡腿肉丁' if is_gongbao else '鳝鱼',
-        'main_value': '120' if is_first else '',
-        'chili_paste': '50' if (is_first and is_gongbao) else '',
-        'red_pickled': '20' if (is_first and not is_gongbao) else '',
-        'green_pickled': '20' if (is_first and not is_gongbao) else '',
-        'fermented_pepper': '10' if (is_first and not is_gongbao) else '',
-        'gb_sweet': '', 'gb_soy': '', 'gb_vinegar': '',
-        'gb_msg': '', 'gb_sugar': '', 'gb_starch': '', 'gb_broth': '', 'gb_other': '',
-        'sp_msg': '3' if (is_first and not is_gongbao) else '',
-        'sp_soy': '3' if (is_first and not is_gongbao) else '',
-        'sp_vinegar': '3' if (is_first and not is_gongbao) else '',
-        'sp_starch': '3' if (is_first and not is_gongbao) else '',
-        'sp_salt': '', 'sp_sugar': '', 'sp_other': '',
-        'garlic_sprout': '30' if is_first else '',
-        'ginger_garlic': '20' if is_first else '',
-        'aux_other': '',
-        'soybean_oil': '50' if is_first else '',
-        'other_oil': '',
+        # 工艺流程
         'proc_1': '', 'proc_2': '', 'proc_3': '', 'proc_4': '', 'proc_5': '',
         'proc_6': '', 'proc_7': '', 'proc_8': '', 'proc_9': '', 'proc_10': '',
+        # 品鉴: pending / pass / fail
         'taste_look': 'pending', 'taste_look_note': '',
         'taste_smell': 'pending', 'taste_smell_note': '',
         'taste_flavor': 'pending', 'taste_flavor_note': '',
         'taste_texture': 'pending', 'taste_texture_note': '',
         'taste_sauce': 'pending', 'taste_sauce_note': '',
         'taste_staple': 'pending', 'taste_staple_note': '',
+        # 问题诊断
         'problem': '', 'cause': '', 'solution': '',
+        # 结论: pending / retain / discard / finalized
         'conclusion': 'retain' if is_first else 'pending',
     }
 
 
+def get_default_recipe_rows(flavor_type):
+    """获取默认配方行"""
+    is_gongbao = (flavor_type == "gongbao")
+    if is_gongbao:
+        return [
+            {'category': '主料', 'name': '鸡腿肉丁', 'values': ['120', '', '', '', '']},
+            {'category': '辣椒酱料', 'name': '糍粑辣椒', 'values': ['50', '', '', '', '']},
+            {'category': '宫保汁', 'name': '甜酱', 'values': ['', '', '', '', '']},
+            {'category': '宫保汁', 'name': '酱油', 'values': ['', '', '', '', '']},
+            {'category': '宫保汁', 'name': '醋', 'values': ['', '', '', '', '']},
+            {'category': '宫保汁', 'name': '味精', 'values': ['', '', '', '', '']},
+            {'category': '宫保汁', 'name': '白糖', 'values': ['', '', '', '', '']},
+            {'category': '宫保汁', 'name': '水淀粉', 'values': ['', '', '', '', '']},
+            {'category': '宫保汁', 'name': '高汤/水', 'values': ['', '', '', '', '']},
+            {'category': '辅料', 'name': '蒜苗', 'values': ['30', '', '', '', '']},
+            {'category': '辅料', 'name': '姜蒜泥', 'values': ['20', '', '', '', '']},
+            {'category': '烹调用油', 'name': '大豆油', 'values': ['50', '', '', '', '']},
+        ]
+    else:
+        return [
+            {'category': '主料', 'name': '鳝鱼', 'values': ['120', '', '', '', '']},
+            {'category': '辣椒酱料', 'name': '红泡椒', 'values': ['20', '', '', '', '']},
+            {'category': '辣椒酱料', 'name': '青泡椒', 'values': ['20', '', '', '', '']},
+            {'category': '辣椒酱料', 'name': '糟辣椒', 'values': ['10', '', '', '', '']},
+            {'category': '独立调料', 'name': '味精', 'values': ['3', '', '', '', '']},
+            {'category': '独立调料', 'name': '酱油', 'values': ['3', '', '', '', '']},
+            {'category': '独立调料', 'name': '醋', 'values': ['3', '', '', '', '']},
+            {'category': '独立调料', 'name': '淀粉', 'values': ['3', '', '', '', '']},
+            {'category': '辅料', 'name': '蒜苗', 'values': ['30', '', '', '', '']},
+            {'category': '辅料', 'name': '姜蒜泥', 'values': ['20', '', '', '', '']},
+            {'category': '烹调用油', 'name': '大豆油', 'values': ['50', '', '', '', '']},
+        ]
+
+
 def get_default_data(flavor_type):
+    """获取完整默认数据"""
     is_gongbao = (flavor_type == "gongbao")
     data = {
         'product_name': '宫保鸡丁' if is_gongbao else '泡椒鳝鱼',
@@ -165,6 +173,7 @@ def get_default_data(flavor_type):
 
 if st.session_state.table_data is None:
     st.session_state.table_data = get_default_data("gongbao")
+    st.session_state.recipe_rows = get_default_recipe_rows("gongbao")
 
 
 # ==================== 辅助函数 ====================
@@ -174,20 +183,23 @@ def taste_emoji(val):
 
 
 def build_context():
+    """构建AI上下文"""
     data = st.session_state.table_data
+    rows = st.session_state.recipe_rows
     ctx = f"产品：{data['product_name']}，味型：{data['flavor_label']}\n"
     ctx += f"出品结构：{data.get('structure', '')}\n\n"
-    for vk in VERSION_KEYS:
+
+    for vi, vk in enumerate(VERSION_KEYS):
         ver = data['versions'][vk]
         ctx += f"【{vk.replace(chr(10), ' ')}】日期：{ver['date']}，目的：{ver['purpose']}\n"
-        ctx += f"主料：{ver['main_name']} {ver['main_value']}g\n"
-        if data['flavor_type'] == "gongbao":
-            ctx += f"糍粑辣椒：{ver.get('chili_paste', '')}g\n"
-            ctx += f"宫保汁：甜酱{ver.get('gb_sweet', '')}g 酱油{ver.get('gb_soy', '')}g 醋{ver.get('gb_vinegar', '')}g 味精{ver.get('gb_msg', '')}g 白糖{ver.get('gb_sugar', '')}g 淀粉{ver.get('gb_starch', '')}g\n"
-        else:
-            ctx += f"红泡椒{ver.get('red_pickled', '')}g 青泡椒{ver.get('green_pickled', '')}g 糟辣椒{ver.get('fermented_pepper', '')}g\n"
-            ctx += f"调料：味精{ver.get('sp_msg', '')}g 酱油{ver.get('sp_soy', '')}g 醋{ver.get('sp_vinegar', '')}g 淀粉{ver.get('sp_starch', '')}g\n"
-        ctx += f"辅料：蒜苗{ver.get('garlic_sprout', '')}g 姜蒜泥{ver.get('ginger_garlic', '')}g 大豆油{ver.get('soybean_oil', '')}g\n"
+
+        # 配方行
+        for r in rows:
+            val = r['values'][vi] if vi < len(r['values']) else ''
+            if val:
+                ctx += f"{r['category']} - {r['name']}：{val}g\n"
+
+        ctx += f"结论：{ver.get('conclusion', '')}\n"
         tastes = []
         for tk, tl in [('taste_look', '观感'), ('taste_smell', '香气'), ('taste_flavor', '味型'),
                        ('taste_texture', '口感'), ('taste_sauce', '芡汁'), ('taste_staple', '配主食')]:
@@ -199,14 +211,14 @@ def build_context():
                 tastes.append(f"{tl}✅")
         if tastes:
             ctx += f"品鉴：{' '.join(tastes)}\n"
-        ctx += f"结论：{ver.get('conclusion', '')}\n\n"
+        ctx += "\n"
     return ctx
 
 
 def call_deepseek(messages):
     api_key = st.session_state.deepseek_key
     if not api_key:
-        return "⚠️ 请先在侧边栏设置 DeepSeek API Key。\n获取：https://platform.deepseek.com/api_keys"
+        return "⚠️ 请先设置 DeepSeek API Key。\nhttps://platform.deepseek.com/api_keys"
     try:
         client = OpenAI(api_key=api_key, base_url="https://api.deepseek.com")
         resp = client.chat.completions.create(
@@ -219,18 +231,13 @@ def call_deepseek(messages):
 
 
 def build_full_csv():
-    """
-    构建完整的菜品研发记录 CSV，包含所有字段：
-    配方、工艺流程、品鉴、问题诊断、结论、研发总结
-    """
+    """构建完整研发记录 CSV"""
     data = st.session_state.table_data
-    is_gongbao = (data['flavor_type'] == "gongbao")
+    rows = st.session_state.recipe_rows
 
-    rows = []
-    for vk in VERSION_KEYS:
+    csv_rows = []
+    for vi, vk in enumerate(VERSION_KEYS):
         ver = data['versions'][vk]
-
-        # 基础信息
         row = {
             '产品名称': data['product_name'],
             '味型': data['flavor_label'],
@@ -240,129 +247,63 @@ def build_full_csv():
             '版本': vk.replace('\n', ' '),
             '日期': ver['date'],
             '研发目的': ver['purpose'],
-            # 配方
-            '主料名称': ver['main_name'],
-            '主料用量(g)': ver['main_value'],
         }
-
-        # 辣椒酱料
-        if is_gongbao:
-            row['糍粑辣椒(g)'] = ver.get('chili_paste', '')
-            row['红泡椒(g)'] = ''
-            row['青泡椒(g)'] = ''
-            row['糟辣椒(g)'] = ''
-        else:
-            row['糍粑辣椒(g)'] = ''
-            row['红泡椒(g)'] = ver.get('red_pickled', '')
-            row['青泡椒(g)'] = ver.get('green_pickled', '')
-            row['糟辣椒(g)'] = ver.get('fermented_pepper', '')
-
-        # 汁料
-        if is_gongbao:
-            row['调味方式'] = '宫保汁（兑碗汁）'
-            row['甜酱(g)'] = ver.get('gb_sweet', '')
-            row['酱油(g)'] = ver.get('gb_soy', '')
-            row['醋(g)'] = ver.get('gb_vinegar', '')
-            row['味精(g)'] = ver.get('gb_msg', '')
-            row['白糖(g)'] = ver.get('gb_sugar', '')
-            row['水淀粉(g)'] = ver.get('gb_starch', '')
-            row['高汤/水(g)'] = ver.get('gb_broth', '')
-            row['其他汁料(g)'] = ver.get('gb_other', '')
-            # 独立调料清空
-            for k in ['sp_msg', 'sp_soy', 'sp_vinegar', 'sp_starch', 'sp_salt', 'sp_sugar', 'sp_other']:
-                row[f'独立_{k}(g)'] = ''
-        else:
-            row['调味方式'] = '独立调料（直接撒入，不兑汁）'
-            # 宫保汁清空
-            for k in ['gb_sweet', 'gb_soy', 'gb_vinegar', 'gb_msg', 'gb_sugar', 'gb_starch', 'gb_broth', 'gb_other']:
-                row[f'宫保_{k}(g)'] = ''
-            row['味精(g)'] = ver.get('sp_msg', '')
-            row['酱油(g)'] = ver.get('sp_soy', '')
-            row['醋(g)'] = ver.get('sp_vinegar', '')
-            row['淀粉(g)'] = ver.get('sp_starch', '')
-            row['盐(g)'] = ver.get('sp_salt', '')
-            row['白糖(g)'] = ver.get('sp_sugar', '')
-            row['其他调料(g)'] = ver.get('sp_other', '')
-
-        # 辅料
-        row['蒜苗(g)'] = ver.get('garlic_sprout', '')
-        row['姜蒜泥(g)'] = ver.get('ginger_garlic', '')
-        row['其他辅料'] = ver.get('aux_other', '')
-
-        # 用油
-        row['大豆油(g)'] = ver.get('soybean_oil', '')
-        row['其他油(g)'] = ver.get('other_oil', '')
+        # 配方
+        for r in rows:
+            val = r['values'][vi] if vi < len(r['values']) else ''
+            row[f"{r['category']}_{r['name']}(g)"] = val
 
         # 工艺流程
-        proc_labels = [
-            "主料处理", "兑汁/备料", "滑油/煸炒", "炒酱料", "爆小料",
-            "合炒", "调味/烹汁", "收汁出锅", "煮主食", "其他"
-        ]
-        for idx, pl in enumerate(proc_labels):
-            row[f'步骤{idx+1}_{pl}'] = ver.get(f'proc_{idx+1}', '')
+        for pi in range(1, 11):
+            row[f'步骤{pi}'] = ver.get(f'proc_{pi}', '')
 
         # 品鉴
-        taste_labels = [
-            ('观感', 'taste_look'),
-            ('香气', 'taste_smell'),
-            ('味型', 'taste_flavor'),
-            ('主料口感', 'taste_texture'),
-            ('芡汁', 'taste_sauce'),
-            ('搭配主食', 'taste_staple'),
-        ]
-        for tl, tk in taste_labels:
-            status = ver.get(tk, 'pending')
-            note = ver.get(f'{tk}_note', '')
-            row[f'品鉴_{tl}'] = taste_emoji(status)
-            row[f'品鉴_{tl}_备注'] = note
+        for tl, tk in [('观感', 'taste_look'), ('香气', 'taste_smell'), ('味型', 'taste_flavor'),
+                       ('主料口感', 'taste_texture'), ('芡汁', 'taste_sauce'), ('搭配主食', 'taste_staple')]:
+            row[f'品鉴_{tl}'] = taste_emoji(ver.get(tk, 'pending'))
+            row[f'品鉴_{tl}_备注'] = ver.get(f'{tk}_note', '')
 
-        # 问题诊断
+        # 问题
         row['问题描述'] = ver.get('problem', '')
         row['原因分析'] = ver.get('cause', '')
         row['调整方案'] = ver.get('solution', '')
+        row['版本结论'] = {'pending': '—', 'retain': '保留优化', 'discard': '淘汰', 'finalized': '✅ 定版通过'}.get(
+            ver.get('conclusion', 'pending'), '—')
+        csv_rows.append(row)
 
-        # 结论
-        conclusion_map = {'pending': '—', 'retain': '保留优化', 'discard': '淘汰', 'finalized': '✅ 定版通过'}
-        row['版本结论'] = conclusion_map.get(ver.get('conclusion', 'pending'), '—')
+    # 总结行
+    sr = {k: '' for k in csv_rows[0].keys()}
+    sr['产品名称'] = data['product_name']
+    sr['版本'] = '【研发总结】'
+    sr['研发目的'] = f"最终配方：{data['summary'].get('final_recipe', '')}"
+    sr['问题描述'] = f"最终流程：{data['summary'].get('final_process', '')}"
+    sr['原因分析'] = f"成本：{data['summary'].get('cost', '')} | 周期：{data['summary'].get('duration', '')}"
+    sr['调整方案'] = f"师傅终签：{data['summary'].get('signature', '')}"
+    csv_rows.append(sr)
 
-        rows.append(row)
-
-    # 添加研发总结行
-    summary_row = {k: '' for k in rows[0].keys()}
-    summary_row['产品名称'] = data['product_name']
-    summary_row['版本'] = '【研发总结】'
-    summary_row['研发目的'] = f"最终配方：{data['summary'].get('final_recipe', '')}"
-    summary_row['主料名称'] = f"最终流程：{data['summary'].get('final_process', '')}"
-    summary_row['主料用量(g)'] = f"成本：{data['summary'].get('cost', '')}"
-    summary_row['调味方式'] = f"周期：{data['summary'].get('duration', '')}"
-    summary_row['问题描述'] = f"师傅终签：{data['summary'].get('signature', '')}"
-    rows.append(summary_row)
-
-    return pd.DataFrame(rows)
+    return pd.DataFrame(csv_rows)
 
 
-# ==================== 打印功能 ====================
-def print_button():
-    """生成一个真正能触发浏览器打印的按钮"""
-    print_js = """
-    <script>
-    function triggerPrint() {
-        window.print();
-    }
-    // 监听来自 Streamlit 的消息
-    window.addEventListener('message', function(e) {
-        if (e.data === 'PRINT_NOW') {
-            window.print();
-        }
-    });
-    </script>
-    """
-    st.components.v1.html(print_js, height=0)
+def add_recipe_row():
+    """添加一行配方"""
+    st.session_state.recipe_rows.append({
+        'category': '',
+        'name': '',
+        'values': ['', '', '', '', ''],
+    })
 
-    if st.button("🖨️ 打印预览 (A4横向)", use_container_width=True, key="btn_print_main",
-                 help="点击后弹出浏览器打印对话框，请设置纸张为A4横向"):
-        # 通过 JavaScript 触发打印
-        st.components.v1.html("<script>window.print();</script>", height=0)
+
+def delete_recipe_row(idx):
+    """删除一行配方"""
+    if len(st.session_state.recipe_rows) > 1:
+        st.session_state.recipe_rows.pop(idx)
+
+
+def switch_flavor(new_flavor):
+    """切换味型"""
+    st.session_state.flavor_type = new_flavor
+    st.session_state.table_data = get_default_data(new_flavor)
+    st.session_state.recipe_rows = get_default_recipe_rows(new_flavor)
 
 
 # ==================== 主界面 ====================
@@ -377,12 +318,11 @@ with c1:
     )
 with c2:
     fm = {"gongbao": "宫保鸡丁（糊辣荔枝）", "paojiao": "泡椒鳝鱼（酸辣）"}
+    current_idx = 0 if st.session_state.flavor_type == "gongbao" else 1
     sf = st.selectbox("味型", list(fm.keys()), format_func=lambda x: fm[x],
-                      index=0 if st.session_state.flavor_type == "gongbao" else 1,
-                      key="flv", label_visibility="collapsed")
+                      index=current_idx, key="flv", label_visibility="collapsed")
     if sf != st.session_state.flavor_type:
-        st.session_state.flavor_type = sf
-        st.session_state.table_data = get_default_data(sf)
+        switch_flavor(sf)
         st.rerun()
 with c3:
     st.session_state.table_data['chef'] = st.text_input(
@@ -396,10 +336,9 @@ with c4:
     )
 with c5:
     if st.button("🔄 重置", use_container_width=True):
-        st.session_state.table_data = get_default_data(st.session_state.flavor_type)
+        switch_flavor(st.session_state.flavor_type)
         st.rerun()
 with c6:
-    # 真正的打印按钮
     st.components.v1.html("""
     <button onclick="window.print()" style="
         width:100%; padding:8px; border-radius:6px; border:1px solid #0f9;
@@ -414,157 +353,168 @@ st.session_state.table_data['structure'] = st.text_input(
 )
 
 data = st.session_state.table_data
-is_gongbao = (st.session_state.flavor_type == "gongbao")
 versions = data['versions']
+recipe_rows = st.session_state.recipe_rows
 
-# ==================== 表格行渲染函数 ====================
-COL_RATIO = [1.3] + [1] * NUM_V
-
-
-def render_row(label, field, placeholder="g", is_area=False, height=40):
-    cols = st.columns(COL_RATIO)
-    with cols[0]:
-        st.markdown(f"<small>{label}</small>", unsafe_allow_html=True)
-    for i, vk in enumerate(VERSION_KEYS):
-        with cols[i + 1]:
-            if is_area:
-                versions[vk][field] = st.text_area(
-                    label, value=versions[vk][field],
-                    key=f"{field}_{vk}", label_visibility="collapsed",
-                    height=height, placeholder=placeholder
-                )
-            else:
-                versions[vk][field] = st.text_input(
-                    label, value=versions[vk][field],
-                    key=f"{field}_{vk}", label_visibility="collapsed",
-                    placeholder=placeholder
-                )
-
-
-def render_select(label, field, options, format_func=None):
-    cols = st.columns(COL_RATIO)
-    with cols[0]:
-        st.markdown(f"<small>{label}</small>", unsafe_allow_html=True)
-    for i, vk in enumerate(VERSION_KEYS):
-        with cols[i + 1]:
-            current = versions[vk].get(field, 'pending')
-            idx = options.index(current) if current in options else 0
-            versions[vk][field] = st.selectbox(
-                label, options, index=idx,
-                format_func=format_func,
-                key=f"{field}_{vk}", label_visibility="collapsed"
-            )
-
-
-def render_taste(label, field):
-    cols = st.columns(COL_RATIO)
-    with cols[0]:
-        st.markdown(f"<small>{label}</small>", unsafe_allow_html=True)
-    for i, vk in enumerate(VERSION_KEYS):
-        with cols[i + 1]:
-            sc1, sc2 = st.columns([0.5, 1])
-            with sc1:
-                current = versions[vk].get(field, 'pending')
-                opts = ['pending', 'pass', 'fail']
-                idx = opts.index(current) if current in opts else 0
-                versions[vk][field] = st.selectbox(
-                    f"{label}状态", opts, index=idx,
-                    format_func=taste_emoji,
-                    key=f"{field}_{vk}_s", label_visibility="collapsed"
-                )
-            with sc2:
-                versions[vk][f'{field}_note'] = st.text_input(
-                    f"{label}备注", value=versions[vk].get(f'{field}_note', ''),
-                    key=f"{field}_{vk}_n", label_visibility="collapsed",
-                    placeholder="备注"
-                )
-
-
-# ==================== 表格渲染 ====================
-# 表头
+# ==================== 表头 ====================
+COL_RATIO = [1.0, 1.0] + [1] * NUM_V  # [类别, 原料名, V1.0, V1.1, V1.2, V2.0, 终版]
 cols = st.columns(COL_RATIO)
 with cols[0]:
-    st.markdown("**项目**")
+    st.markdown("**类别**")
+with cols[1]:
+    st.markdown("**原料名称**")
 for i, vk in enumerate(VERSION_KEYS):
-    with cols[i + 1]:
+    with cols[i + 2]:
         st.markdown(f"**{vk.replace(chr(10), '<br>')}**", unsafe_allow_html=True)
 st.divider()
 
-# 日期 & 目的
-render_row("📅 日期", "date", placeholder="月/日")
-render_row("🎯 研发目的", "purpose", placeholder="目的...")
+# ==================== 日期 & 目的（跨越配方列） ====================
+# 用 2 + NUM_V 列
+FULL_COLS = [1.0, 1.0] + [1] * NUM_V
+cols = st.columns(FULL_COLS)
+with cols[0]:
+    st.markdown("**📅 日期**")
+with cols[1]:
+    st.markdown("**🎯 研发目的**")
+for i, vk in enumerate(VERSION_KEYS):
+    with cols[i + 2]:
+        versions[vk]['date'] = st.text_input("日期", value=versions[vk]['date'],
+                                             key=f"date_{vk}", label_visibility="collapsed", placeholder="月/日")
+        versions[vk]['purpose'] = st.text_input("目的", value=versions[vk]['purpose'],
+                                                key=f"purpose_{vk}", label_visibility="collapsed", placeholder="目的...")
 
-st.markdown('<div class="section-label">📋 配方记录</div>', unsafe_allow_html=True)
+st.divider()
 
-# 主料
-render_row(f"主料 ({versions[VERSION_KEYS[0]]['main_name']})", "main_value")
+# ==================== 配方记录（动态行） ====================
+st.markdown('<div class="section-label">📋 配方记录 <span style="font-weight:400;font-size:0.75rem;">（可自由增删行）</span></div>',
+            unsafe_allow_html=True)
 
-# 辣椒
-st.caption("辣椒酱料")
-if is_gongbao:
-    render_row("糍粑辣椒", "chili_paste")
-else:
-    render_row("红泡椒", "red_pickled")
-    render_row("青泡椒", "green_pickled")
-    render_row("糟辣椒", "fermented_pepper")
+# 渲染每一行配方
+delete_idx = None
+for ri, row in enumerate(recipe_rows):
+    cols = st.columns(FULL_COLS)
+    with cols[0]:
+        row['category'] = st.text_input(
+            f"类别{ri}", value=row['category'],
+            key=f"cat_{ri}", label_visibility="collapsed",
+            placeholder="如：主料、辅料、宫保汁..."
+        )
+    with cols[1]:
+        # 原料名 + 删除按钮
+        nc1, nc2 = st.columns([3, 1])
+        with nc1:
+            row['name'] = st.text_input(
+                f"原料{ri}", value=row['name'],
+                key=f"name_{ri}", label_visibility="collapsed",
+                placeholder="原料名称"
+            )
+        with nc2:
+            st.markdown('<div class="delete-btn">', unsafe_allow_html=True)
+            if st.button("✕", key=f"del_{ri}", help="删除此行"):
+                delete_idx = ri
+            st.markdown('</div>', unsafe_allow_html=True)
 
-# 汁料
-if is_gongbao:
-    st.caption("宫保汁（兑碗汁）")
-    for lb, fd in [("甜酱", "gb_sweet"), ("酱油", "gb_soy"), ("醋", "gb_vinegar"),
-                   ("味精", "gb_msg"), ("白糖", "gb_sugar"), ("水淀粉", "gb_starch"),
-                   ("高汤/水", "gb_broth"), ("其他", "gb_other")]:
-        render_row(lb, fd)
-else:
-    st.caption("独立调料（直接撒入，不兑汁）")
-    for lb, fd in [("味精", "sp_msg"), ("酱油", "sp_soy"), ("醋", "sp_vinegar"),
-                   ("淀粉", "sp_starch"), ("盐", "sp_salt"), ("白糖", "sp_sugar"), ("其他", "sp_other")]:
-        render_row(lb, fd)
+    for vi in range(NUM_V):
+        with cols[vi + 2]:
+            # 确保 values 长度够
+            while len(row['values']) <= vi:
+                row['values'].append('')
+            row['values'][vi] = st.text_input(
+                f"值{ri}_{vi}", value=row['values'][vi],
+                key=f"val_{ri}_{vi}", label_visibility="collapsed",
+                placeholder="g"
+            )
 
-# 辅料
-st.caption("辅料")
-render_row("蒜苗", "garlic_sprout")
-render_row("姜蒜泥", "ginger_garlic")
-render_row("其他", "aux_other")
+# 处理删除
+if delete_idx is not None:
+    delete_recipe_row(delete_idx)
+    st.rerun()
 
-# 油
-st.caption("烹调用油")
-render_row("大豆油", "soybean_oil")
-render_row("其他油", "other_oil")
+# 添加按钮
+st.markdown('<div class="add-btn">', unsafe_allow_html=True)
+if st.button("＋ 添加一行配方", use_container_width=True, key="add_recipe"):
+    add_recipe_row()
+    st.rerun()
+st.markdown('</div>', unsafe_allow_html=True)
 
-# 工艺流程
+# ==================== 工艺流程 ====================
 st.markdown('<div class="section-label">⚙️ 工艺流程</div>', unsafe_allow_html=True)
+# 工艺流程：标签占2列 + 5个版本
+PROC_COLS = [2.0] + [1] * NUM_V
 proc_labels = [
     "1.主料处理", "2.兑汁/备料", "3.滑油/煸炒", "4.炒酱料", "5.爆小料",
     "6.合炒", "7.调味/烹汁", "8.收汁出锅", "9.煮主食", "10.其他"
 ]
 for idx, lb in enumerate(proc_labels):
-    render_row(lb, f"proc_{idx + 1}", placeholder="...")
+    cols = st.columns(PROC_COLS)
+    with cols[0]:
+        st.markdown(f"<small>{lb}</small>", unsafe_allow_html=True)
+    for i, vk in enumerate(VERSION_KEYS):
+        with cols[i + 1]:
+            versions[vk][f'proc_{idx + 1}'] = st.text_input(
+                f"步骤{idx + 1}", value=versions[vk][f'proc_{idx + 1}'],
+                key=f"proc_{idx + 1}_{vk}", label_visibility="collapsed", placeholder="..."
+            )
 
-# 品鉴
+# ==================== 品鉴记录 ====================
 st.markdown('<div class="section-label">🔍 品鉴记录</div>', unsafe_allow_html=True)
 for lb, fd in [("观感", "taste_look"), ("香气", "taste_smell"), ("味型", "taste_flavor"),
                ("主料口感", "taste_texture"), ("芡汁", "taste_sauce"), ("搭配主食", "taste_staple")]:
-    render_taste(lb, fd)
+    cols = st.columns(PROC_COLS)
+    with cols[0]:
+        st.markdown(f"<small>{lb}</small>", unsafe_allow_html=True)
+    for i, vk in enumerate(VERSION_KEYS):
+        with cols[i + 1]:
+            sc1, sc2 = st.columns([0.5, 1])
+            with sc1:
+                cur = versions[vk].get(fd, 'pending')
+                opts = ['pending', 'pass', 'fail']
+                idx = opts.index(cur) if cur in opts else 0
+                versions[vk][fd] = st.selectbox(
+                    f"{lb}状态", opts, index=idx, format_func=taste_emoji,
+                    key=f"{fd}_{vk}_s", label_visibility="collapsed"
+                )
+            with sc2:
+                versions[vk][f'{fd}_note'] = st.text_input(
+                    f"{lb}备注", value=versions[vk].get(f'{fd}_note', ''),
+                    key=f"{fd}_{vk}_n", label_visibility="collapsed", placeholder="备注"
+                )
 
-# 问题诊断
+# ==================== 问题诊断 ====================
 st.markdown('<div class="section-label">⚠️ 问题诊断与调整</div>', unsafe_allow_html=True)
-render_row("问题描述", "problem", placeholder="...", is_area=True, height=50)
-render_row("原因分析", "cause", placeholder="...", is_area=True, height=50)
-render_row("调整方案", "solution", placeholder="...", is_area=True, height=50)
+for lb, fd in [("问题描述", "problem"), ("原因分析", "cause"), ("调整方案", "solution")]:
+    cols = st.columns(PROC_COLS)
+    with cols[0]:
+        st.markdown(f"<small>{lb}</small>", unsafe_allow_html=True)
+    for i, vk in enumerate(VERSION_KEYS):
+        with cols[i + 1]:
+            versions[vk][fd] = st.text_area(
+                lb, value=versions[vk][fd],
+                key=f"{fd}_{vk}", label_visibility="collapsed", height=50, placeholder="..."
+            )
 
-# 结论
+# ==================== 版本结论 ====================
 st.markdown('<div class="section-label">📌 版本结论</div>', unsafe_allow_html=True)
 conclusion_opts = ['pending', 'retain', 'discard', 'finalized']
 conclusion_fmt = lambda x: {'pending': '—', 'retain': '保留优化', 'discard': '淘汰', 'finalized': '✅ 定版'}[x]
-render_select("结论", "conclusion", conclusion_opts, conclusion_fmt)
+cols = st.columns(PROC_COLS)
+with cols[0]:
+    st.markdown("<small>结论</small>", unsafe_allow_html=True)
+for i, vk in enumerate(VERSION_KEYS):
+    with cols[i + 1]:
+        cur = versions[vk].get('conclusion', 'pending')
+        idx = conclusion_opts.index(cur) if cur in conclusion_opts else 0
+        versions[vk]['conclusion'] = st.selectbox(
+            "结论", conclusion_opts, index=idx, format_func=conclusion_fmt,
+            key=f"conclusion_{vk}", label_visibility="collapsed"
+        )
 
-# 研发总结
+# ==================== 研发总结 ====================
 st.markdown('<div class="section-label">📝 研发总结</div>', unsafe_allow_html=True)
 sc1, sc2 = st.columns(2)
 with sc1:
-    data['summary']['final_recipe'] = st.text_area("最终配方", value=data['summary'].get('final_recipe', ''), height=80,
-                                                   key="sr")
+    data['summary']['final_recipe'] = st.text_area("最终配方", value=data['summary'].get('final_recipe', ''),
+                                                   height=80, key="sr")
     data['summary']['final_process'] = st.text_area("最终流程（关键控制点）",
                                                     value=data['summary'].get('final_process', ''), height=80, key="sp")
 with sc2:
@@ -576,29 +526,33 @@ with sc2:
 # ==================== 底部按钮 ====================
 st.divider()
 b1, b2, b3 = st.columns(3)
-
 with b1:
+    # 导出 JSON 包含 recipe_rows
+    export_data = {
+        **data,
+        'recipe_rows': st.session_state.recipe_rows,
+    }
     st.download_button(
         "📥 导出 JSON（完整研发记录）",
-        json.dumps(data, ensure_ascii=False, indent=2),
+        json.dumps(export_data, ensure_ascii=False, indent=2),
         f"研发记录_{data['product_name']}_{datetime.now().strftime('%Y%m%d')}.json",
         "application/json",
         use_container_width=True,
     )
-
 with b2:
     uf = st.file_uploader("📤 导入 JSON", type="json", key="jup", label_visibility="collapsed")
     if uf:
         try:
-            st.session_state.table_data = json.loads(uf.read())
-            st.session_state.flavor_type = st.session_state.table_data.get('flavor_type', 'gongbao')
+            imported = json.loads(uf.read())
+            st.session_state.recipe_rows = imported.pop('recipe_rows', get_default_recipe_rows(
+                imported.get('flavor_type', 'gongbao')))
+            st.session_state.table_data = imported
+            st.session_state.flavor_type = imported.get('flavor_type', 'gongbao')
             st.success("✅ 导入成功")
             st.rerun()
         except Exception as e:
             st.error(f"导入失败：{e}")
-
 with b3:
-    # 导出完整研发记录 CSV
     full_df = build_full_csv()
     st.download_button(
         "📊 导出 CSV（完整研发记录表）",
@@ -621,39 +575,33 @@ with st.sidebar:
     with q1:
         if st.button("🔍 分析配方", use_container_width=True):
             with st.spinner("分析中..."):
-                msgs = [
-                    {"role": "system", "content": "你是贵州菜品研发专家。分析配方合理性，指出问题，给出具体建议。用中文。"},
-                    {"role": "user", "content": f"分析以下研发记录：\n\n{build_context()}"}]
+                msgs = [{"role": "system",
+                         "content": "你是贵州菜品研发专家。分析配方合理性，指出问题，给出具体建议。用中文。"},
+                        {"role": "user", "content": f"分析以下研发记录：\n\n{build_context()}"}]
                 rep = call_deepseek(msgs)
-            st.session_state.chat_history += [
-                {"role": "user", "content": "🔍 分析配方"},
-                {"role": "assistant", "content": rep}
-            ]
+            st.session_state.chat_history += [{"role": "user", "content": "🔍 分析配方"},
+                                              {"role": "assistant", "content": rep}]
             st.rerun()
     with q2:
         if st.button("📋 对比版本", use_container_width=True):
             with st.spinner("分析中..."):
-                msgs = [
-                    {"role": "system", "content": "你是贵州菜品研发专家。对比各版本变化，分析调整意图和效果。用中文。"},
-                    {"role": "user", "content": f"对比版本差异：\n\n{build_context()}"}]
+                msgs = [{"role": "system",
+                         "content": "你是贵州菜品研发专家。对比各版本变化，分析调整意图和效果。用中文。"},
+                        {"role": "user", "content": f"对比版本差异：\n\n{build_context()}"}]
                 rep = call_deepseek(msgs)
-            st.session_state.chat_history += [
-                {"role": "user", "content": "📋 对比版本"},
-                {"role": "assistant", "content": rep}
-            ]
+            st.session_state.chat_history += [{"role": "user", "content": "📋 对比版本"},
+                                              {"role": "assistant", "content": rep}]
             st.rerun()
     q3, q4 = st.columns(2)
     with q3:
         if st.button("💡 优化建议", use_container_width=True):
             with st.spinner("思考中..."):
-                msgs = [
-                    {"role": "system", "content": "你是贵州菜品研发专家。给出3-5条具体优化建议，要具体到克数或操作。用中文。"},
-                    {"role": "user", "content": f"基于以下记录给优化建议：\n\n{build_context()}"}]
+                msgs = [{"role": "system",
+                         "content": "你是贵州菜品研发专家。给出3-5条具体优化建议，要具体到克数或操作。用中文。"},
+                        {"role": "user", "content": f"基于以下记录给优化建议：\n\n{build_context()}"}]
                 rep = call_deepseek(msgs)
-            st.session_state.chat_history += [
-                {"role": "user", "content": "💡 优化建议"},
-                {"role": "assistant", "content": rep}
-            ]
+            st.session_state.chat_history += [{"role": "user", "content": "💡 优化建议"},
+                                              {"role": "assistant", "content": rep}]
             st.rerun()
     with q4:
         if st.button("🧹 清空", use_container_width=True):
@@ -672,7 +620,8 @@ with st.sidebar:
     if um:
         st.session_state.chat_history.append({"role": "user", "content": um})
         with st.spinner("思考中..."):
-            msgs = [{"role": "system", "content": "你是贵州菜品研发专家。根据研发记录和用户问题，给出专业回答。用中文。"},
+            msgs = [{"role": "system",
+                     "content": "你是贵州菜品研发专家。根据研发记录和用户问题，给出专业回答。用中文。"},
                     {"role": "user", "content": f"研发记录：\n\n{build_context()}\n\n用户问题：{um}"}]
             rep = call_deepseek(msgs)
         st.session_state.chat_history.append({"role": "assistant", "content": rep})
@@ -681,4 +630,4 @@ with st.sidebar:
 # 页脚
 st.divider()
 st.caption(
-    "贵州盖浇面/饭 · 菜品研发过程记录表 | 宫保：糍粑辣椒+宫保汁（兑碗汁） | 泡椒：红泡椒+青泡椒+糟辣椒+独立调料（直接撒入，不兑汁） | Powered by Streamlit + DeepSeek")
+    "贵州盖浇面/饭 · 菜品研发过程记录表 | 配方行可自由增删 | 宫保：糍粑辣椒+宫保汁（兑碗汁） | 泡椒：红泡椒+青泡椒+糟辣椒+独立调料（直接撒入） | Powered by Streamlit + DeepSeek")
