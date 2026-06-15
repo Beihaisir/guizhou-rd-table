@@ -9,6 +9,7 @@ import json
 import os
 from datetime import datetime
 from openai import OpenAI
+import base64
 
 # ==================== 页面配置 ====================
 st.set_page_config(
@@ -21,7 +22,7 @@ st.set_page_config(
 # ==================== 常量 ====================
 VERSION_KEYS = ['V1.0\n首次试做', 'V1.1\n调整', 'V1.2\n调整', 'V2.0\n改版', '终版\n定型']
 VERSION_LABELS = ['V1.0（首次试做）', 'V1.1（调整）', 'V1.2（调整）', 'V2.0（改版）', '终版定型']
-NUM_V = len(VERSION_KEYS)  # 5
+NUM_V = len(VERSION_KEYS)
 
 # ==================== CSS ====================
 st.markdown("""
@@ -39,24 +40,46 @@ st.markdown("""
         padding: 5px 10px; background: rgba(233,68,96,0.1);
         border-radius: 4px; border-left: 3px solid #e94560;
     }
-    .stButton > button {
-        border-radius: 6px; font-weight: 500;
-    }
-    div[data-testid="stVerticalBlock"] > div[style*="flex"] {
-        gap: 2px !important;
-    }
+    .stButton > button { border-radius: 6px; font-weight: 500; }
     .stTextInput input, .stTextArea textarea {
-        font-size: 0.78rem !important;
-        padding: 2px 4px !important;
+        font-size: 0.78rem !important; padding: 2px 4px !important;
     }
+    /* 打印样式 - 使用 @media print 实现真正的浏览器打印 */
     @media print {
-        header, .stSidebar, .stButton, .stDownloadButton, hr, iframe {
+        /* 隐藏 Streamlit 自带元素 */
+        header[data-testid="stHeader"],
+        .stSidebar,
+        .stDeployButton,
+        [data-testid="stToolbar"],
+        [data-testid="stDecoration"],
+        iframe,
+        .stDownloadButton,
+        hr {
             display: none !important;
         }
-        .stApp { background: #fff !important; }
-        .main-title { color: #000 !important; border-bottom-color: #000 !important; }
+        /* 白色背景 */
+        .stApp {
+            background: #fff !important;
+        }
+        .main-title {
+            color: #000 !important;
+            border-bottom-color: #000 !important;
+        }
         .main-title span { color: #000 !important; }
-        .section-label { color: #000 !important; background: #f0f0f0 !important; border-left-color: #000 !important; }
+        .section-label {
+            color: #000 !important;
+            background: #f0f0f0 !important;
+            border-left-color: #000 !important;
+        }
+        /* 确保表格可见 */
+        .stMainBlockContainer {
+            max-width: 100% !important;
+            padding: 0 !important;
+        }
+        body {
+            -webkit-print-color-adjust: exact;
+            print-color-adjust: exact;
+        }
     }
 </style>
 """, unsafe_allow_html=True)
@@ -70,6 +93,8 @@ if 'flavor_type' not in st.session_state:
     st.session_state.flavor_type = "gongbao"
 if 'deepseek_key' not in st.session_state:
     st.session_state.deepseek_key = os.environ.get("DEEPSEEK_API_KEY", "")
+if 'trigger_print' not in st.session_state:
+    st.session_state.trigger_print = False
 
 try:
     if st.secrets.get("DEEPSEEK_API_KEY"):
@@ -86,40 +111,31 @@ def create_version_data(flavor_type, is_first=False):
         'purpose': '搭建基础味型框架' if is_first else '',
         'main_name': '鸡腿肉丁' if is_gongbao else '鳝鱼',
         'main_value': '120' if is_first else '',
-        # 辣椒
         'chili_paste': '50' if (is_first and is_gongbao) else '',
         'red_pickled': '20' if (is_first and not is_gongbao) else '',
         'green_pickled': '20' if (is_first and not is_gongbao) else '',
         'fermented_pepper': '10' if (is_first and not is_gongbao) else '',
-        # 宫保汁
         'gb_sweet': '', 'gb_soy': '', 'gb_vinegar': '',
         'gb_msg': '', 'gb_sugar': '', 'gb_starch': '', 'gb_broth': '', 'gb_other': '',
-        # 独立调料
         'sp_msg': '3' if (is_first and not is_gongbao) else '',
         'sp_soy': '3' if (is_first and not is_gongbao) else '',
         'sp_vinegar': '3' if (is_first and not is_gongbao) else '',
         'sp_starch': '3' if (is_first and not is_gongbao) else '',
         'sp_salt': '', 'sp_sugar': '', 'sp_other': '',
-        # 辅料
         'garlic_sprout': '30' if is_first else '',
         'ginger_garlic': '20' if is_first else '',
         'aux_other': '',
-        # 油
         'soybean_oil': '50' if is_first else '',
         'other_oil': '',
-        # 流程
         'proc_1': '', 'proc_2': '', 'proc_3': '', 'proc_4': '', 'proc_5': '',
         'proc_6': '', 'proc_7': '', 'proc_8': '', 'proc_9': '', 'proc_10': '',
-        # 品鉴
         'taste_look': 'pending', 'taste_look_note': '',
         'taste_smell': 'pending', 'taste_smell_note': '',
         'taste_flavor': 'pending', 'taste_flavor_note': '',
         'taste_texture': 'pending', 'taste_texture_note': '',
         'taste_sauce': 'pending', 'taste_sauce_note': '',
         'taste_staple': 'pending', 'taste_staple_note': '',
-        # 问题
         'problem': '', 'cause': '', 'solution': '',
-        # 结论
         'conclusion': 'retain' if is_first else 'pending',
     }
 
@@ -194,14 +210,159 @@ def call_deepseek(messages):
     try:
         client = OpenAI(api_key=api_key, base_url="https://api.deepseek.com")
         resp = client.chat.completions.create(
-            model="deepseek-chat",
-            messages=messages,
-            temperature=0.7,
-            max_tokens=2000,
+            model="deepseek-chat", messages=messages,
+            temperature=0.7, max_tokens=2000,
         )
         return resp.choices[0].message.content
     except Exception as e:
         return f"❌ API 调用失败：{str(e)}"
+
+
+def build_full_csv():
+    """
+    构建完整的菜品研发记录 CSV，包含所有字段：
+    配方、工艺流程、品鉴、问题诊断、结论、研发总结
+    """
+    data = st.session_state.table_data
+    is_gongbao = (data['flavor_type'] == "gongbao")
+
+    rows = []
+    for vk in VERSION_KEYS:
+        ver = data['versions'][vk]
+
+        # 基础信息
+        row = {
+            '产品名称': data['product_name'],
+            '味型': data['flavor_label'],
+            '出品结构': data.get('structure', ''),
+            '研发师傅': data.get('chef', ''),
+            '记录人': data.get('recorder', ''),
+            '版本': vk.replace('\n', ' '),
+            '日期': ver['date'],
+            '研发目的': ver['purpose'],
+            # 配方
+            '主料名称': ver['main_name'],
+            '主料用量(g)': ver['main_value'],
+        }
+
+        # 辣椒酱料
+        if is_gongbao:
+            row['糍粑辣椒(g)'] = ver.get('chili_paste', '')
+            row['红泡椒(g)'] = ''
+            row['青泡椒(g)'] = ''
+            row['糟辣椒(g)'] = ''
+        else:
+            row['糍粑辣椒(g)'] = ''
+            row['红泡椒(g)'] = ver.get('red_pickled', '')
+            row['青泡椒(g)'] = ver.get('green_pickled', '')
+            row['糟辣椒(g)'] = ver.get('fermented_pepper', '')
+
+        # 汁料
+        if is_gongbao:
+            row['调味方式'] = '宫保汁（兑碗汁）'
+            row['甜酱(g)'] = ver.get('gb_sweet', '')
+            row['酱油(g)'] = ver.get('gb_soy', '')
+            row['醋(g)'] = ver.get('gb_vinegar', '')
+            row['味精(g)'] = ver.get('gb_msg', '')
+            row['白糖(g)'] = ver.get('gb_sugar', '')
+            row['水淀粉(g)'] = ver.get('gb_starch', '')
+            row['高汤/水(g)'] = ver.get('gb_broth', '')
+            row['其他汁料(g)'] = ver.get('gb_other', '')
+            # 独立调料清空
+            for k in ['sp_msg', 'sp_soy', 'sp_vinegar', 'sp_starch', 'sp_salt', 'sp_sugar', 'sp_other']:
+                row[f'独立_{k}(g)'] = ''
+        else:
+            row['调味方式'] = '独立调料（直接撒入，不兑汁）'
+            # 宫保汁清空
+            for k in ['gb_sweet', 'gb_soy', 'gb_vinegar', 'gb_msg', 'gb_sugar', 'gb_starch', 'gb_broth', 'gb_other']:
+                row[f'宫保_{k}(g)'] = ''
+            row['味精(g)'] = ver.get('sp_msg', '')
+            row['酱油(g)'] = ver.get('sp_soy', '')
+            row['醋(g)'] = ver.get('sp_vinegar', '')
+            row['淀粉(g)'] = ver.get('sp_starch', '')
+            row['盐(g)'] = ver.get('sp_salt', '')
+            row['白糖(g)'] = ver.get('sp_sugar', '')
+            row['其他调料(g)'] = ver.get('sp_other', '')
+
+        # 辅料
+        row['蒜苗(g)'] = ver.get('garlic_sprout', '')
+        row['姜蒜泥(g)'] = ver.get('ginger_garlic', '')
+        row['其他辅料'] = ver.get('aux_other', '')
+
+        # 用油
+        row['大豆油(g)'] = ver.get('soybean_oil', '')
+        row['其他油(g)'] = ver.get('other_oil', '')
+
+        # 工艺流程
+        proc_labels = [
+            "主料处理", "兑汁/备料", "滑油/煸炒", "炒酱料", "爆小料",
+            "合炒", "调味/烹汁", "收汁出锅", "煮主食", "其他"
+        ]
+        for idx, pl in enumerate(proc_labels):
+            row[f'步骤{idx+1}_{pl}'] = ver.get(f'proc_{idx+1}', '')
+
+        # 品鉴
+        taste_labels = [
+            ('观感', 'taste_look'),
+            ('香气', 'taste_smell'),
+            ('味型', 'taste_flavor'),
+            ('主料口感', 'taste_texture'),
+            ('芡汁', 'taste_sauce'),
+            ('搭配主食', 'taste_staple'),
+        ]
+        for tl, tk in taste_labels:
+            status = ver.get(tk, 'pending')
+            note = ver.get(f'{tk}_note', '')
+            row[f'品鉴_{tl}'] = taste_emoji(status)
+            row[f'品鉴_{tl}_备注'] = note
+
+        # 问题诊断
+        row['问题描述'] = ver.get('problem', '')
+        row['原因分析'] = ver.get('cause', '')
+        row['调整方案'] = ver.get('solution', '')
+
+        # 结论
+        conclusion_map = {'pending': '—', 'retain': '保留优化', 'discard': '淘汰', 'finalized': '✅ 定版通过'}
+        row['版本结论'] = conclusion_map.get(ver.get('conclusion', 'pending'), '—')
+
+        rows.append(row)
+
+    # 添加研发总结行
+    summary_row = {k: '' for k in rows[0].keys()}
+    summary_row['产品名称'] = data['product_name']
+    summary_row['版本'] = '【研发总结】'
+    summary_row['研发目的'] = f"最终配方：{data['summary'].get('final_recipe', '')}"
+    summary_row['主料名称'] = f"最终流程：{data['summary'].get('final_process', '')}"
+    summary_row['主料用量(g)'] = f"成本：{data['summary'].get('cost', '')}"
+    summary_row['调味方式'] = f"周期：{data['summary'].get('duration', '')}"
+    summary_row['问题描述'] = f"师傅终签：{data['summary'].get('signature', '')}"
+    rows.append(summary_row)
+
+    return pd.DataFrame(rows)
+
+
+# ==================== 打印功能 ====================
+def print_button():
+    """生成一个真正能触发浏览器打印的按钮"""
+    print_js = """
+    <script>
+    function triggerPrint() {
+        window.print();
+    }
+    // 监听来自 Streamlit 的消息
+    window.addEventListener('message', function(e) {
+        if (e.data === 'PRINT_NOW') {
+            window.print();
+        }
+    });
+    </script>
+    """
+    st.components.v1.html(print_js, height=0)
+
+    if st.button("🖨️ 打印预览 (A4横向)", use_container_width=True, key="btn_print_main",
+                 help="点击后弹出浏览器打印对话框，请设置纸张为A4横向"):
+        # 通过 JavaScript 触发打印
+        st.components.v1.html("<script>window.print();</script>", height=0)
 
 
 # ==================== 主界面 ====================
@@ -238,8 +399,14 @@ with c5:
         st.session_state.table_data = get_default_data(st.session_state.flavor_type)
         st.rerun()
 with c6:
-    if st.button("🖨️ 打印", use_container_width=True):
-        st.markdown("<script>window.print();</script>", unsafe_allow_html=True)
+    # 真正的打印按钮
+    st.components.v1.html("""
+    <button onclick="window.print()" style="
+        width:100%; padding:8px; border-radius:6px; border:1px solid #0f9;
+        background:#0f3460; color:#0f9; font-weight:600; cursor:pointer;
+        font-size:0.85rem; font-family:inherit;
+    ">🖨️ 打印</button>
+    """, height=40)
 
 st.session_state.table_data['structure'] = st.text_input(
     "出品结构", value=st.session_state.table_data.get('structure', ''),
@@ -250,13 +417,11 @@ data = st.session_state.table_data
 is_gongbao = (st.session_state.flavor_type == "gongbao")
 versions = data['versions']
 
-# ==================== 核心思路：用表格行来组织输入 ====================
-# 定义一个行渲染函数，输入标签和字段key，输出5个版本的输入框
-COL_RATIO = [1.3] + [1] * NUM_V  # 这里 NUM_V = 5，安全
+# ==================== 表格行渲染函数 ====================
+COL_RATIO = [1.3] + [1] * NUM_V
 
 
 def render_row(label, field, placeholder="g", is_area=False, height=40):
-    """渲染一行输入：标签 + 5个版本的输入框"""
     cols = st.columns(COL_RATIO)
     with cols[0]:
         st.markdown(f"<small>{label}</small>", unsafe_allow_html=True)
@@ -277,7 +442,6 @@ def render_row(label, field, placeholder="g", is_area=False, height=40):
 
 
 def render_select(label, field, options, format_func=None):
-    """渲染一行下拉选择"""
     cols = st.columns(COL_RATIO)
     with cols[0]:
         st.markdown(f"<small>{label}</small>", unsafe_allow_html=True)
@@ -293,7 +457,6 @@ def render_select(label, field, options, format_func=None):
 
 
 def render_taste(label, field):
-    """渲染品鉴行：选择+备注"""
     cols = st.columns(COL_RATIO)
     with cols[0]:
         st.markdown(f"<small>{label}</small>", unsafe_allow_html=True)
@@ -327,9 +490,8 @@ for i, vk in enumerate(VERSION_KEYS):
         st.markdown(f"**{vk.replace(chr(10), '<br>')}**", unsafe_allow_html=True)
 st.divider()
 
-# 日期
+# 日期 & 目的
 render_row("📅 日期", "date", placeholder="月/日")
-# 目的
 render_row("🎯 研发目的", "purpose", placeholder="目的...")
 
 st.markdown('<div class="section-label">📋 配方记录</div>', unsafe_allow_html=True)
@@ -370,7 +532,7 @@ st.caption("烹调用油")
 render_row("大豆油", "soybean_oil")
 render_row("其他油", "other_oil")
 
-# ==================== 工艺流程 ====================
+# 工艺流程
 st.markdown('<div class="section-label">⚙️ 工艺流程</div>', unsafe_allow_html=True)
 proc_labels = [
     "1.主料处理", "2.兑汁/备料", "3.滑油/煸炒", "4.炒酱料", "5.爆小料",
@@ -379,34 +541,32 @@ proc_labels = [
 for idx, lb in enumerate(proc_labels):
     render_row(lb, f"proc_{idx + 1}", placeholder="...")
 
-# ==================== 品鉴 ====================
+# 品鉴
 st.markdown('<div class="section-label">🔍 品鉴记录</div>', unsafe_allow_html=True)
 for lb, fd in [("观感", "taste_look"), ("香气", "taste_smell"), ("味型", "taste_flavor"),
                ("主料口感", "taste_texture"), ("芡汁", "taste_sauce"), ("搭配主食", "taste_staple")]:
     render_taste(lb, fd)
 
-# ==================== 问题诊断 ====================
+# 问题诊断
 st.markdown('<div class="section-label">⚠️ 问题诊断与调整</div>', unsafe_allow_html=True)
 render_row("问题描述", "problem", placeholder="...", is_area=True, height=50)
 render_row("原因分析", "cause", placeholder="...", is_area=True, height=50)
 render_row("调整方案", "solution", placeholder="...", is_area=True, height=50)
 
-# ==================== 结论 ====================
+# 结论
 st.markdown('<div class="section-label">📌 版本结论</div>', unsafe_allow_html=True)
 conclusion_opts = ['pending', 'retain', 'discard', 'finalized']
 conclusion_fmt = lambda x: {'pending': '—', 'retain': '保留优化', 'discard': '淘汰', 'finalized': '✅ 定版'}[x]
 render_select("结论", "conclusion", conclusion_opts, conclusion_fmt)
 
-# ==================== 研发总结 ====================
+# 研发总结
 st.markdown('<div class="section-label">📝 研发总结</div>', unsafe_allow_html=True)
 sc1, sc2 = st.columns(2)
 with sc1:
-    data['summary']['final_recipe'] = st.text_area(
-        "最终配方", value=data['summary'].get('final_recipe', ''), height=80, key="sr"
-    )
-    data['summary']['final_process'] = st.text_area(
-        "最终流程（关键控制点）", value=data['summary'].get('final_process', ''), height=80, key="sp"
-    )
+    data['summary']['final_recipe'] = st.text_area("最终配方", value=data['summary'].get('final_recipe', ''), height=80,
+                                                   key="sr")
+    data['summary']['final_process'] = st.text_area("最终流程（关键控制点）",
+                                                    value=data['summary'].get('final_process', ''), height=80, key="sp")
 with sc2:
     data['summary']['cost'] = st.text_input("浇头成本（元/份）", value=data['summary'].get('cost', ''), key="sc")
     data['summary']['duration'] = st.text_input("研发周期", value=data['summary'].get('duration', ''),
@@ -415,11 +575,17 @@ with sc2:
 
 # ==================== 底部按钮 ====================
 st.divider()
-b1, b2, b3, b4 = st.columns(4)
+b1, b2, b3 = st.columns(3)
+
 with b1:
-    st.download_button("📥 导出 JSON", json.dumps(data, ensure_ascii=False, indent=2),
-                       f"研发记录_{data['product_name']}_{datetime.now().strftime('%Y%m%d')}.json",
-                       "application/json", use_container_width=True)
+    st.download_button(
+        "📥 导出 JSON（完整研发记录）",
+        json.dumps(data, ensure_ascii=False, indent=2),
+        f"研发记录_{data['product_name']}_{datetime.now().strftime('%Y%m%d')}.json",
+        "application/json",
+        use_container_width=True,
+    )
+
 with b2:
     uf = st.file_uploader("📤 导入 JSON", type="json", key="jup", label_visibility="collapsed")
     if uf:
@@ -430,23 +596,17 @@ with b2:
             st.rerun()
         except Exception as e:
             st.error(f"导入失败：{e}")
+
 with b3:
-    rows = []
-    for vk in VERSION_KEYS:
-        v = versions[vk]
-        rows.append({
-            '版本': vk.replace('\n', ' '), '日期': v['date'],
-            '主料': f"{v['main_name']} {v['main_value']}g",
-            '糍粑辣椒': v.get('chili_paste', ''), '红泡椒': v.get('red_pickled', ''),
-            '青泡椒': v.get('green_pickled', ''), '糟辣椒': v.get('fermented_pepper', ''),
-            '蒜苗': v.get('garlic_sprout', ''), '姜蒜泥': v.get('ginger_garlic', ''),
-            '大豆油': v.get('soybean_oil', ''), '结论': v.get('conclusion', ''),
-        })
-    st.download_button("📊 导出 CSV", pd.DataFrame(rows).to_csv(index=False),
-                       f"配方表_{data['product_name']}.csv", "text/csv", use_container_width=True)
-with b4:
-    if st.button("🖨️ 打印预览", use_container_width=True):
-        st.markdown("<script>window.print();</script>", unsafe_allow_html=True)
+    # 导出完整研发记录 CSV
+    full_df = build_full_csv()
+    st.download_button(
+        "📊 导出 CSV（完整研发记录表）",
+        full_df.to_csv(index=False, encoding='utf-8-sig'),
+        f"研发记录表_{data['product_name']}_{datetime.now().strftime('%Y%m%d')}.csv",
+        "text/csv",
+        use_container_width=True,
+    )
 
 # ==================== 侧边栏 ====================
 with st.sidebar:
@@ -461,8 +621,9 @@ with st.sidebar:
     with q1:
         if st.button("🔍 分析配方", use_container_width=True):
             with st.spinner("分析中..."):
-                msgs = [{"role": "system", "content": "你是贵州菜品研发专家。分析配方合理性，指出问题，给出具体建议。用中文。"},
-                        {"role": "user", "content": f"分析以下研发记录：\n\n{build_context()}"}]
+                msgs = [
+                    {"role": "system", "content": "你是贵州菜品研发专家。分析配方合理性，指出问题，给出具体建议。用中文。"},
+                    {"role": "user", "content": f"分析以下研发记录：\n\n{build_context()}"}]
                 rep = call_deepseek(msgs)
             st.session_state.chat_history += [
                 {"role": "user", "content": "🔍 分析配方"},
@@ -472,8 +633,9 @@ with st.sidebar:
     with q2:
         if st.button("📋 对比版本", use_container_width=True):
             with st.spinner("分析中..."):
-                msgs = [{"role": "system", "content": "你是贵州菜品研发专家。对比各版本变化，分析调整意图和效果。用中文。"},
-                        {"role": "user", "content": f"对比版本差异：\n\n{build_context()}"}]
+                msgs = [
+                    {"role": "system", "content": "你是贵州菜品研发专家。对比各版本变化，分析调整意图和效果。用中文。"},
+                    {"role": "user", "content": f"对比版本差异：\n\n{build_context()}"}]
                 rep = call_deepseek(msgs)
             st.session_state.chat_history += [
                 {"role": "user", "content": "📋 对比版本"},
@@ -484,8 +646,9 @@ with st.sidebar:
     with q3:
         if st.button("💡 优化建议", use_container_width=True):
             with st.spinner("思考中..."):
-                msgs = [{"role": "system", "content": "你是贵州菜品研发专家。给出3-5条具体优化建议，要具体到克数或操作。用中文。"},
-                        {"role": "user", "content": f"基于以下记录给优化建议：\n\n{build_context()}"}]
+                msgs = [
+                    {"role": "system", "content": "你是贵州菜品研发专家。给出3-5条具体优化建议，要具体到克数或操作。用中文。"},
+                    {"role": "user", "content": f"基于以下记录给优化建议：\n\n{build_context()}"}]
                 rep = call_deepseek(msgs)
             st.session_state.chat_history += [
                 {"role": "user", "content": "💡 优化建议"},
@@ -517,4 +680,5 @@ with st.sidebar:
 
 # 页脚
 st.divider()
-st.caption("贵州盖浇面/饭 · 菜品研发过程记录表 | 宫保：糍粑辣椒+宫保汁（兑碗汁） | 泡椒：红泡椒+青泡椒+糟辣椒+独立调料（直接撒入，不兑汁） | Powered by Streamlit + DeepSeek")
+st.caption(
+    "贵州盖浇面/饭 · 菜品研发过程记录表 | 宫保：糍粑辣椒+宫保汁（兑碗汁） | 泡椒：红泡椒+青泡椒+糟辣椒+独立调料（直接撒入，不兑汁） | Powered by Streamlit + DeepSeek")
